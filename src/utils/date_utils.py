@@ -8,7 +8,7 @@ import pandas as pd
 def split_daily_date_range(
     start_dt: pd.Timestamp,
     end_dt: pd.Timestamp,
-    chunk_size: int = 365
+    chunk_size: int = 250*4 # 4 years
 ) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
     """Split a date range into chunks for daily data."""
     if start_dt > end_dt:
@@ -28,7 +28,7 @@ def split_daily_date_range(
 def split_5min_date_range(
     start_dt: pd.Timestamp,
     end_dt: pd.Timestamp,
-    chunk_size: int = 7
+    chunk_size: int = 5
 ) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
     """Split a date range into chunks for 5-minute data."""
     if start_dt > end_dt:

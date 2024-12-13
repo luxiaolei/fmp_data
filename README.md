@@ -1,127 +1,122 @@
 # FMP Data Client
 
-A robust Python client for Financial Modeling Prep (FMP) API with data persistence, caching, and automated data collection capabilities.
+A robust Python client for Financial Modeling Prep (FMP) API with data persistence and automated data collection capabilities.
 
 ## Features
 
-### Core Features (v1.0)
+### Current Features
 - Async API client for efficient data fetching
-- Daily historical price data for stocks, indices, forex, and crypto
-- Data persistence in MongoDB with automatic schema validation
-- Redis-based caching and rate limiting
-- Automated data health checks and gap detection
+- Historical price data support:
+  - Daily data with automatic gap detection
+  - 5-minute intraday data
+- MongoDB-based data persistence with:
+  - Automatic schema validation
+  - Data integrity checks
+  - Gap detection and tracking
+- Index constituent tracking:
+  - S&P 500
+  - NASDAQ
+  - Dow Jones
+- Comprehensive data statistics and monitoring
+- Rich CLI interface with progress tracking
 - Timezone-aware data handling
-- Comprehensive logging with loguru
-- CLI for data downloads and updates
-- Background tasks for data ingestion
-- Configurable cron jobs for routine updates
-
-### Planned Features (v2.0)
-- 5-minute intraday data support
-- Real-time market data updates
-- Support for fundamental data (financial statements, ratios, etc.)
-- News and sentiment data integration
-- Advanced caching strategies
-- Data export capabilities (CSV, Parquet)
-- REST API service layer
+- Configurable logging with loguru
 
 ## Installation
 
 ```bash
-pip install fmp-data
-```
+# Clone the repository
+git clone https://github.com/yourusername/fmp-data.git
+cd fmp-data
 
-## Quick Start
-
-```python
-from fmp_data import FMPDataClient
-
-# Initialize client
-client = FMPDataClient()
-
-# Get daily historical data
-df = await client.get_daily_data(
-    symbol="AAPL",
-    start_date="2024-01-01",
-    end_date="2024-01-31"
-)
-
-# Get current S&P 500 constituents
-sp500 = await client.get_index_constituents("sp500")
-
-# Get historical constituent changes
-changes = await client.get_historical_constituents("sp500")
+# Install dependencies
+pip install -r requirements.txt
 ```
 
 ## Configuration
 
-The client can be configured via environment variables or a config file:
+Create a `.env` file in the project root:
 
-```yaml
-# config.yaml
-api:
-  key: YOUR_FMP_API_KEY
-  base_url: https://financialmodelingprep.com/api/v3
-  rate_limit: 740  # requests per minute
-
-storage:
-  mongodb:
-    uri: mongodb://localhost:27017
-    db_name: fmp_data
-  redis:
-    url: redis://localhost:6379
-    password: YOUR_REDIS_PASSWORD
-
-logging:
-  level: INFO
-  format: "{time} | {level} | {message}"
-  rotation: "1 day"
+```env
+FMP_API_KEY=your_api_key
+MONGO_URI=mongodb://localhost:27017
+MONGO_DB_NAME=fmp_data
 ```
+
+## CLI Usage
+
+```bash
+# Start interactive mode
+python -m fmp_data.cli.main
+
+# Available commands:
+python -m fmp_data.cli.main interactive  # Interactive mode
+python -m fmp_data.cli.main update-indexes  # Update index constituents
+python -m fmp_data.cli.main test  # Run system tests
+python -m fmp_data.cli.main routine-update  # Run routine data updates
+```
+
+### Interactive Mode Features
+1. Download historical data (single symbol or all symbols)
+2. Update index constituents
+3. View data statistics
+4. Run routine updates
+5. Set log level
+6. Database management
 
 ## Project Structure
 
 ```
 fmp_data/
+├── cli/
+│   └── main.py          # CLI implementation
 ├── src/
-│   ├── api/              # API client modules
-│   ├── models/           # Data models and schemas
-│   ├── storage/          # Database and cache handlers
-│   ├── collectors/       # Data collection jobs
-│   ├── utils/           # Helper functions
-│   └── config/          # Configuration handling
-├── tests/               # Test suite
-└── examples/            # Usage examples
+│   ├── api/             # API client implementation
+│   │   └── fmp_client.py
+│   ├── config/          # Configuration handling
+│   │   └── settings.py
+│   ├── models/          # Data models
+│   │   └── data_types.py
+│   ├── storage/         # Data persistence
+│   │   ├── mongo.py
+│   │   ├── protocols.py
+│   │   └── schemas.py
+│   └── utils/           # Utilities
+│       ├── calendar.py
+│       ├── date_utils.py
+│       └── tasks.py
 ```
 
-## Environment Variables
+## Data Statistics
 
-Required environment variables:
-- `FMP_API_KEY`: Your FMP API key
-- `MONGO_URI`: MongoDB connection URI
-- `MONGO_DB_NAME`: MongoDB database name
-- `REDIS_URL`: Redis connection URL
-- `REDIS_PASSWORD`: Redis password
+View comprehensive statistics about your data:
+- Total symbols tracked
+- Daily and 5-minute data points
+- Date range coverage
+- Symbol distribution by exchange
+- Symbol distribution by asset type
+
+## Error Handling
+
+The client includes:
+- Comprehensive error logging
+- Automatic retry mechanisms
+- Data validation
+- Gap detection and reporting
 
 ## Contributing
 
-Contributions are welcome! Please check our contribution guidelines.
+Contributions are welcome! Please:
+1. Fork the repository
+2. Create a feature branch
+3. Submit a pull request
 
 ## License
 
 MIT License
 
-## CLI Usage
+## Acknowledgments
 
-```bash
-# Download historical data for a symbol
-fmp download --symbol AAPL --start-date 2024-01-01
-
-# Download all symbols
-fmp download
-
-# Update index constituents
-fmp update-indexes
-
-# Start cron job for routine updates
-fmp start-cron
-```
+- Financial Modeling Prep API
+- MongoDB
+- Rich CLI library

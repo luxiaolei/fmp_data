@@ -31,6 +31,7 @@ mypy = "^1.8.0"
 ruff = "^0.1.9"
 types-redis = "^4.6.0"
 types-PyYAML = "^6.0.12"
+pytest-mock = "^3.12.0"
 
 [tool.mypy]
 python_version = "3.11"
@@ -68,3 +69,7 @@ log_cli = true
 log_cli_level = "DEBUG"
 log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(filename)s:%(lineno)s)"
 log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+
+
+[tool.poetry.scripts]
+fmp = "src.cli:main"

@@ -1,44 +1,40 @@
 """Exchange calendar utilities."""
 
 from datetime import datetime
-from typing import List, cast
-from zoneinfo import ZoneInfo
+from typing import List
 
 import exchange_calendars as xcals
 import pandas as pd
 from loguru import logger
-from pandas import DatetimeIndex
 
 
 class ExchangeCalendar:
-    """Exchange calendar handler."""
+    """Exchange calendar manager."""
     
-    # Calendar cache
-    _calendars: dict[str, xcals.ExchangeCalendar] = {}
-    
+    _calendars = {}  # Cache for calendars
+    _default_exchange = "NYSE"
+    _exchange_mapping = {
+        "NYSE": "XNYS",
+        "NASDAQ": "XNAS",
+        "AMEX": "XASE",
+        "LSE": "XLON",
+        "TSX": "XTSE"
+    }
+
     @classmethod
     def get_calendar(cls, exchange: str) -> xcals.ExchangeCalendar:
-        """Get exchange calendar."""
+        """Get calendar for exchange."""
         exchange = exchange.upper()
         if exchange not in cls._calendars:
-            # Map common exchange names to exchange_calendars codes
-            calendar_map = {
-                "NYSE": "XNYS",
-                "NASDAQ": "XNAS",
-                "AMEX": "XASE",
-                "LSE": "XLON",
-                "TSX": "XTSE"
-            }
-            calendar_code = calendar_map.get(exchange, exchange)
             try:
+                calendar_code = cls._exchange_mapping.get(exchange, "XNYS")
                 cls._calendars[exchange] = xcals.get_calendar(calendar_code)
             except Exception as e:
-                logger.error(f"Error getting calendar for {exchange}: {e}")
-                # Default to NYSE calendar
+                logger.warning(f"Error getting calendar for {exchange}: {e}")
                 cls._calendars[exchange] = xcals.get_calendar("XNYS")
                 
         return cls._calendars[exchange]
-    
+
     @classmethod
     def get_trading_days(
         cls,
@@ -48,19 +44,29 @@ class ExchangeCalendar:
     ) -> List[datetime]:
         """Get trading days between dates."""
         calendar = cls.get_calendar(exchange)
-        # Convert to timezone naive dates for calendar
-        naive_start = start_date.replace(tzinfo=None)
-        naive_end = end_date.replace(
-            hour=0, minute=0, second=0, microsecond=0, tzinfo=None
-        )
         
-        # Get schedule DataFrame and extract dates
-        schedule = calendar.sessions_in_range(naive_start, naive_end)
-        # Return timezone-aware dates
-        tz = start_date.tzinfo
-        dates = cast(DatetimeIndex, schedule).to_pydatetime()
-        return [d.replace(tzinfo=tz) for d in dates]
-    
+        # Convert dates to timezone-naive for comparison with calendar
+        start_dt = pd.Timestamp(start_date).tz_localize(None).normalize()  # Ensure midnight
+        end_dt = pd.Timestamp(end_date).tz_localize(None).normalize()  # Ensure midnight
+        calendar_start = calendar.first_session.tz_localize(None)
+        
+        # Get the first valid trading day if start_date is before calendar start
+        if start_dt < calendar_start:
+            start_dt = calendar_start
+            
+        # Get only trading days (excluding weekends and holidays)
+        schedule = calendar.sessions_in_range(start_dt, end_dt)
+        
+        # First localize to UTC, then convert to original timezone
+        original_tz = start_date.tzinfo
+        if original_tz:
+            # Use calendar's timezone before converting to target timezone
+            return [
+                ts.tz_localize(calendar.tz).tz_convert(original_tz).to_pydatetime()
+                for ts in schedule
+            ]
+        return [ts.tz_localize(calendar.tz).to_pydatetime() for ts in schedule]
+
     @classmethod
     def get_trading_minutes(
         cls,
@@ -69,98 +75,49 @@ class ExchangeCalendar:
         exchange: str = "NYSE",
         interval: str = "5min"
     ) -> List[datetime]:
-        """Get trading minutes between dates.
-        
-        All times are handled in US/Eastern timezone internally since that's what
-        the exchange uses, but results are returned in the input timezone.
-        """
+        """Get trading minutes between dates."""
         calendar = cls.get_calendar(exchange)
-        logger.debug(f"Getting trading minutes for {exchange} from {start_date} to {end_date}")
         
-        # Convert interval string to pandas frequency
-        freq = pd.Timedelta(interval)
+        # Convert dates to timezone-naive for comparison
+        start_dt = pd.Timestamp(start_date).tz_localize(None)
+        end_dt = pd.Timestamp(end_date).tz_localize(None)
+        calendar_start = calendar.first_session.tz_localize(None)
         
-        # Store original timezone for later
-        original_tz = start_date.tzinfo
-        
-        # Convert input dates to NY timezone for internal processing
-        ny_tz = ZoneInfo("America/New_York")
-        ny_start = pd.Timestamp(start_date).tz_convert(ny_tz)
-        ny_end = pd.Timestamp(end_date).tz_convert(ny_tz)
-        
-        # Get the dates at midnight for sessions_in_range
-        session_start = ny_start.replace(
-            hour=0, minute=0, second=0, microsecond=0, tzinfo=None
-        )
-        session_end = (ny_end + pd.Timedelta(days=1)).replace(
-            hour=0, minute=0, second=0, microsecond=0, tzinfo=None
-        )
-        
-        logger.debug(f"Using session range: {session_start} to {session_end}")
-        
-        # Get trading sessions for the date range
-        sessions = calendar.sessions_in_range(session_start, session_end)
-        logger.debug(f"Found {len(sessions)} trading sessions")
-        
-        if len(sessions) == 0:
-            return []
+        # Adjust start date if before calendar start
+        if start_dt < calendar_start:
+            start_dt = calendar_start
             
-        # Get market open/close times for these sessions
-        opens = calendar.opens.loc[sessions]
-        closes = calendar.closes.loc[sessions]
+        # Get all minutes and then resample to desired interval
+        minutes = calendar.minutes_in_range(start_dt, end_dt)
+        if not minutes.empty:
+            # Convert to DataFrame for resampling
+            df = pd.DataFrame(index=minutes)
+            resampled = df.resample(interval).first()
+            
+            # Convert back to timezone-aware using original timezone
+            original_tz = start_date.tzinfo
+            if original_tz:
+                # Use tz_convert instead of tz_localize for already tz-aware timestamps
+                return [ts.tz_convert(original_tz).to_pydatetime() for ts in resampled.index]
+            return [ts.to_pydatetime() for ts in resampled.index]
+        return []
+
+    @classmethod
+    def get_holidays(cls, exchange: str = "NYSE") -> List[datetime]:
+        """Get list of holidays for the given exchange."""
+        calendar = cls.get_calendar(exchange)
+        start_date = pd.Timestamp('2000-01-01')
+        end_date = pd.Timestamp.now()
         
-        # Create minute range for each session
-        all_minutes = []
-        # Convert to naive NY time for comparison
-        original_start = ny_start.tz_localize(None)
-        original_end = ny_end.tz_localize(None)
+        # Get all holidays from the exchange calendar
+        trading_days = calendar.sessions_in_range(start_date, end_date)
+        all_days = pd.date_range(start=start_date, end=end_date, freq='B')
         
-        for session_open, session_close in zip(opens, closes):
-            # Convert session times to naive NY time
-            session_open = pd.Timestamp(session_open).tz_convert(ny_tz).tz_localize(None)
-            session_close = pd.Timestamp(session_close).tz_convert(ny_tz).tz_localize(None)
-            logger.debug(f"Processing session: open={session_open}, close={session_close}")
-            
-            # Generate full range of minutes for the session
-            session_minutes = pd.date_range(
-                start=max(session_open, original_start),
-                end=min(session_close, original_end),
-                freq=freq,
-                inclusive='left'  # Don't include the closing time
-            )
-            logger.debug(f"Generated {len(session_minutes)} minutes for session")
-            
-            # Filter minutes based on market hours
-            valid_minutes = []
-            for minute in session_minutes:
-                hour = minute.hour
-                minute_val = minute.minute
-                
-                # Only include minutes during market hours (in NY time)
-                if hour < 9 or hour > 16:
-                    continue
-                if hour == 9 and minute_val < 30:
-                    continue
-                if hour == 16 and minute_val > 0:
-                    continue
-                    
-                valid_minutes.append(minute)
-            
-            logger.debug(f"After filtering: {len(valid_minutes)} valid minutes")
-            if valid_minutes:
-                logger.debug(f"First minute: {valid_minutes[0]}, Last minute: {valid_minutes[-1]}")
-            
-            all_minutes.extend(valid_minutes)
-            
-        if not all_minutes:
-            return []
-            
-        # Convert back to timezone-aware NY time first
-        ny_minutes = [d.replace(tzinfo=ny_tz) for d in all_minutes]
-        # Then convert to original timezone
-        result = [d.astimezone(original_tz) for d in ny_minutes]
+        # Find holidays by getting business days that aren't valid trading days
+        holidays = all_days[~all_days.isin(trading_days)]
         
-        logger.debug(f"Returning {len(result)} minutes")
-        if len(result) > 0:
-            logger.debug(f"First: {result[0]}, Last: {result[-1]}")
-        return result
+        # Convert to datetime objects in calendar's timezone
+        return [
+            h.tz_localize(calendar.tz).to_pydatetime() 
+            for h in holidays
+        ]

@@ -34,6 +34,7 @@ class SymbolMetadata(DataMetadata):
     
     symbol: str
     first_date: datetime
+    first_price: Optional[float] = None
     last_date: datetime
     data_points: int
     intervals: List[str]  # ["1d", "5min"]
@@ -56,22 +57,10 @@ class IndexMetadata(DataMetadata):
 COLLECTIONS = {
     # Price data collections
     "historical_prices": {
-        "indexes": [
-            {
-                "keys": [("symbol", 1), ("date", 1)],
-                "unique": True
-            },
-            {
-                "keys": [("date", 1)]
-            },
-            {
-                "keys": [("symbol", 1)]
-            }
-        ],
         "validator": {
             "$jsonSchema": {
                 "bsonType": "object",
-                "required": ["symbol", "date", "open", "high", "low", "close", "volume"],
+                "required": ["symbol", "date"],
                 "properties": {
                     "symbol": {"bsonType": "string"},
                     "date": {"bsonType": "date"},
@@ -79,12 +68,21 @@ COLLECTIONS = {
                     "high": {"bsonType": "double"},
                     "low": {"bsonType": "double"},
                     "close": {"bsonType": "double"},
-                    "volume": {"bsonType": "int"},
-                    "adj_close": {"bsonType": "double"},
-                    "vwap": {"bsonType": "double"}
+                    "adjClose": {"bsonType": "double"},
+                    "volume": {"bsonType": ["int", "double"]},
+                    "unadjustedVolume": {"bsonType": ["int", "double"]},
+                    "vwap": {"bsonType": "double"},
+                    "change": {"bsonType": "double"},
+                    "changePercent": {"bsonType": "double"},
+                    "changeOverTime": {"bsonType": "double"},
+                    "label": {"bsonType": "string"}
                 }
             }
-        }
+        },
+        "indexes": [
+            {"keys": [("symbol", 1), ("date", 1)], "unique": True},
+            {"keys": [("date", 1)], "unique": False}
+        ]
     },
     
     # Metadata collections
@@ -127,24 +125,43 @@ COLLECTIONS = {
     
     # Index constituent collections
     "index_constituents": {
-        "indexes": [
-            {"keys": [("index", 1), ("date", 1), ("symbol", 1)], "unique": True},
-            {"keys": [("symbol", 1)]},
-            {"keys": [("date", 1)]}
-        ],
         "validator": {
             "$jsonSchema": {
                 "bsonType": "object",
-                "required": ["index", "symbol", "date", "sector"],
+                "required": ["symbol", "name", "sector", "sub_sector"],
                 "properties": {
-                    "index": {"bsonType": "string"},
                     "symbol": {"bsonType": "string"},
-                    "date": {"bsonType": "date"},
+                    "name": {"bsonType": "string"},
                     "sector": {"bsonType": "string"},
                     "sub_sector": {"bsonType": "string"},
-                    "weight": {"bsonType": "double"}
+                    "head_quarter": {"bsonType": ["string", "null"]},
+                    "date_first_added": {"bsonType": ["string", "null"]},
+                    "cik": {"bsonType": ["string", "null"]},
+                    "founded": {"bsonType": ["string", "null"]},
+                    "last_updated": {"bsonType": "date"}
                 }
             }
-        }
+        },
+        "indexes": [
+            {"keys": [("index", 1), ("symbol", 1)], "unique": True},
+            {"keys": [("last_updated", 1)], "unique": False}
+        ]
+    },
+    "company_profiles": {
+        "validator": {
+            "$jsonSchema": {
+                "bsonType": "object",
+                "required": ["symbol", "last_updated"],
+                "properties": {
+                    "symbol": {"bsonType": "string"},
+                    "companyName": {"bsonType": "string"},
+                    "ipoDate": {"bsonType": "string"},
+                    "last_updated": {"bsonType": "date"}
+                }
+            }
+        },
+        "indexes": [
+            {"keys": [("symbol", 1)], "unique": True}
+        ]
     }
 } 

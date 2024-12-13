@@ -553,11 +553,38 @@ class FMPClient:
         return df.sort_values(["symbol", "date_added"])
 
     async def benchmark_m5_current_constituents(
-        self, 
+        self,
         index: str = "sp500",
         batch_size: int = 100
     ) -> None:
-        """Benchmark test for getting current constituents' last 5 minutes data."""
+        """Benchmark performance of fetching 5-minute data for current index constituents.
+
+        This method tests the API's performance by fetching the most recent 5-minute
+        data for all current constituents of a specified market index. It processes
+        requests in batches and collects performance metrics.
+
+        Parameters
+        ----------
+        index : str, optional
+            Market index to benchmark ('sp500', 'nasdaq', or 'dowjones'), by default "sp500"
+        batch_size : int, optional
+            Number of symbols to process in parallel, by default 100
+
+        Returns
+        -------
+        None
+            Prints benchmark results to console
+
+        Notes
+        -----
+        Performance metrics include:
+        - Total execution time
+        - Requests per second
+        - Success/failure counts
+        - Total data points retrieved
+        - Symbols with NaN values
+        - Average time per symbol
+        """
         # Get current constituents
         rprint(f"[cyan]Getting current {index.upper()} constituents...")
         const_df = await self.get_index_constituents(index)
@@ -570,16 +597,27 @@ class FMPClient:
         
         # Benchmark data collection
         start_time = time.time()
-        results = []
-        errors = []
+        results: List[Dict[str, Any]] = []
+        errors: List[Dict[str, str]] = []
         
         async def fetch_symbol_data(symbol: str) -> Dict[str, Any]:
-            """Fetch data for a single symbol."""
+            """Fetch 5-minute data for a single symbol.
+
+            Parameters
+            ----------
+            symbol : str
+                Stock symbol to fetch data for
+
+            Returns
+            -------
+            Dict[str, Any]
+                Dictionary containing fetch results and statistics
+            """
             try:
                 df = await self.get_historical_data(
                     symbol,
-                    start_date=pd.Timestamp(start_dt),
-                    end_date=pd.Timestamp(end_dt),
+                    start_date=start_dt,
+                    end_date=end_dt,
                     interval="5min"
                 )
                 return {
