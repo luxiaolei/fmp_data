@@ -15,13 +15,19 @@ from ..models.data_types import AssetType, ExchangeInfo, IndexConstituent
 from ..storage.mongo import MongoStorage
 from ..storage.protocols import StorageProtocol
 from ..utils.date_utils import split_5min_date_range, split_daily_date_range
+from ..utils.rate_limiter import RedisRateLimiter
 from ..utils.tasks import background_task
 
 
 class FMPClient:
     """Financial Modeling Prep API client."""
     
-    def __init__(self, settings: Settings):
+    def __init__(
+        self,
+        settings: Settings,
+        redis_url: str = "redis://localhost:6379",
+        redis_password: Optional[str] = None
+    ):
         """Initialize FMP client."""
         self.settings = settings
         self.session: Optional[aiohttp.ClientSession] = None
@@ -29,6 +35,12 @@ class FMPClient:
         self._logger = logger
         self._exchange_cache: Dict[str, List[ExchangeInfo]] = {}
         self._background_tasks: Set[asyncio.Task] = set()
+        
+        # Initialize rate limiter
+        self.rate_limiter = RedisRateLimiter(
+            redis_url=redis_url,
+            redis_password=redis_password
+        )
 
     @background_task
     async def _store_data_async(
@@ -295,7 +307,7 @@ class FMPClient:
         endpoint: str,
         params: Optional[Dict[str, str]] = None
     ) -> Dict:
-        """Get data from FMP API.
+        """Get data from FMP API with rate limiting.
         
         Parameters
         ----------
@@ -323,6 +335,9 @@ class FMPClient:
         
         url = f"{self.settings.api.base_url}/{endpoint}"
         logger.debug(f"Making API request to: {url} with params: {params}")
+        
+        # Wait for rate limit token
+        await self.rate_limiter.wait_if_needed()
         
         try:
             async with self.session.get(url, params=params) as response:
