@@ -109,30 +109,85 @@ def interactive(config: Optional[str]):
                             else:
                                 progress.update(chunk_task, description=f"[yellow]No data found for {symbol}")
                         else:
-                            # Download for all symbols
+                            # Download for all symbols with batch processing
+                            BATCH_SIZE = 175  # 700/4 for optimal rate limit usage
+                            MAX_CONCURRENT_BATCHES = 4  # Number of batches to process concurrently
+                            
                             symbols = await client.get_all_exchange_symbols()
+                            
+                            # Create two progress bars - one for overall progress and one for current batch
                             symbols_task = progress.add_task(
-                                f"[cyan]Downloading all symbols ({interval})",
+                                f"[cyan]Overall progress ({interval})",
                                 total=len(symbols)
                             )
+                            batch_task = progress.add_task(
+                                "[cyan]Current batch",
+                                total=BATCH_SIZE,
+                                visible=True
+                            )
                             
-                            for sym in symbols:
-                                try:
-                                    df = await client.get_historical_data(
-                                        sym.symbol,
-                                        start_date,
-                                        end_date,
-                                        interval,
-                                        progress=progress
+                            async def download_symbol_batch(batch):
+                                """Download historical data for a batch of symbols."""
+                                # Reset batch progress for new batch
+                                progress.update(batch_task, completed=0, visible=True)
+                                
+                                tasks = []
+                                for sym in batch:
+                                    tasks.append(
+                                        client.get_historical_data(
+                                            sym.symbol,
+                                            start_date,
+                                            end_date,
+                                            interval,
+                                            progress=progress
+                                        )
                                     )
-                                    if not df.empty:
-                                        await storage.store_historical_data(df, sym.symbol, interval)
-                                        progress.update(symbols_task, advance=1, description=f"[green]Downloaded {sym.symbol}")
-                                    else:
-                                        progress.update(symbols_task, advance=1, description=f"[yellow]No data for {sym.symbol}")
-                                except Exception as e:
-                                    progress.update(symbols_task, advance=1, description=f"[red]Failed {sym.symbol}: {e}")
+                                results = await asyncio.gather(*tasks, return_exceptions=True)
+                                
+                                for sym, result in zip(batch, results):
+                                    try:
+                                        if isinstance(result, Exception):
+                                            logger.error(f"Error downloading {sym.symbol}: {result}")
+                                            progress.update(symbols_task, advance=1)
+                                            progress.update(batch_task, advance=1)
+                                            continue
+                                        
+                                        if isinstance(result, pd.DataFrame) and not result.empty:
+                                            await storage.store_historical_data(result, sym.symbol, interval)
+                                            progress.update(
+                                                symbols_task,
+                                                advance=1,
+                                                description=f"[green]Downloaded {sym.symbol}"
+                                            )
+                                        else:
+                                            progress.update(
+                                                symbols_task,
+                                                advance=1,
+                                                description=f"[yellow]No data for {sym.symbol}"
+                                            )
+                                        progress.update(batch_task, advance=1)
+                                    except Exception as e:
+                                        logger.error(f"Error processing {sym.symbol}: {e}")
+                                        progress.update(symbols_task, advance=1)
+                                        progress.update(batch_task, advance=1)
+                                
+                                # Hide batch progress after completion
+                                progress.update(batch_task, visible=False)
                             
+                            # Split symbols into batches
+                            batches = [
+                                symbols[i:i + BATCH_SIZE]
+                                for i in range(0, len(symbols), BATCH_SIZE)
+                            ]
+                            
+                            # Process batches in groups of MAX_CONCURRENT_BATCHES
+                            for i in range(0, len(batches), MAX_CONCURRENT_BATCHES):
+                                batch_group = batches[i:i + MAX_CONCURRENT_BATCHES]
+                                progress.update(batch_task, total=len(batch_group[0]))  # Update for potentially smaller last batch
+                                await asyncio.gather(*(
+                                    download_symbol_batch(batch) for batch in batch_group
+                                ))
+            
             elif choice == "2":
                 index = click.prompt(
                     "Select index",
@@ -368,10 +423,16 @@ def test(config: Optional[str], symbol: str):
 
 async def run_routine_update(settings: Settings, storage: MongoStorage, days: int) -> None:
     """Run routine updates for all data."""
+    BATCH_SIZE = 175  # 700/4 for optimal rate limit usage
+    MAX_CONCURRENT_BATCHES = 4  # Number of batches to process concurrently
+    
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
         TimeElapsedColumn(),
+        TimeRemainingColumn(),
         console=console
     ) as progress:
         overall = progress.add_task("[cyan]Running routine update...", total=4)
@@ -393,32 +454,101 @@ async def run_routine_update(settings: Settings, storage: MongoStorage, days: in
                 await storage.store_index_constituents(index, constituents)
             progress.advance(overall)
             
-            # 3. Update company profiles
+            # 3. Update company profiles in batches
             progress.update(overall, description="[cyan]Updating company profiles...")
             symbols = await client.get_all_exchange_symbols()
-            for symbol in symbols:
-                profile = await client.get_company_profile(symbol.symbol)
-                if profile:
-                    await storage.store_company_profile(profile)
+            profile_task = progress.add_task(
+                "[cyan]Updating profiles",
+                total=len(symbols)
+            )
+            
+            async def update_profile_batch(batch):
+                """Update profiles for a batch of symbols."""
+                tasks = []
+                for symbol in batch:
+                    tasks.append(client.get_company_profile(symbol.symbol))
+                profiles = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                for symbol, result in zip(batch, profiles):
+                    try:
+                        if isinstance(result, Exception):
+                            logger.error(f"Error getting profile for {symbol.symbol}: {result}")
+                            progress.advance(profile_task)
+                            continue
+                        
+                        if isinstance(result, dict):
+                            await storage.store_company_profile(result)
+                        progress.advance(profile_task)
+                    except Exception as e:
+                        logger.error(f"Error storing profile for {symbol.symbol}: {e}")
+                        progress.advance(profile_task)
+            
+            # Process profile batches concurrently
+            batches = [
+                symbols[i:i + BATCH_SIZE]
+                for i in range(0, len(symbols), BATCH_SIZE)
+            ]
+            
+            # Process batches in groups of MAX_CONCURRENT_BATCHES
+            for i in range(0, len(batches), MAX_CONCURRENT_BATCHES):
+                batch_group = batches[i:i + MAX_CONCURRENT_BATCHES]
+                await asyncio.gather(*(
+                    update_profile_batch(batch) for batch in batch_group
+                ))
+            
             progress.advance(overall)
             
-            # 4. Update historical data
+            # 4. Update historical data in batches
             progress.update(overall, description="[cyan]Updating historical data...")
             end_date = get_latest_market_day()
             start_date = pd.Timestamp(end_date) - pd.Timedelta(days=days)
             
-            for symbol in symbols:
-                try:
-                    df = await client.get_historical_data(
-                        symbol.symbol,
-                        start_date,
-                        end_date,
-                        interval="1d"
+            data_task = progress.add_task(
+                "[cyan]Updating historical data",
+                total=len(symbols)
+            )
+            
+            async def update_data_batch(batch):
+                """Update historical data for a batch of symbols."""
+                tasks = []
+                for symbol in batch:
+                    tasks.append(
+                        client.get_historical_data(
+                            symbol.symbol,
+                            start_date,
+                            end_date,
+                            interval="1d"
+                        )
                     )
-                    if not df.empty:
-                        await storage.store_historical_data(df, symbol.symbol, "1d")
-                except Exception as e:
-                    logger.error(f"Error updating {symbol.symbol}: {e}")
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                for symbol, result in zip(batch, results):
+                    try:
+                        if isinstance(result, Exception):
+                            logger.error(f"Error getting data for {symbol.symbol}: {result}")
+                            progress.advance(data_task)
+                            continue
+                        
+                        if isinstance(result, pd.DataFrame) and not result.empty:
+                            await storage.store_historical_data(result, symbol.symbol, "1d")
+                        progress.advance(data_task)
+                    except Exception as e:
+                        logger.error(f"Error storing data for {symbol.symbol}: {e}")
+                        progress.advance(data_task)
+            
+            # Process historical data batches concurrently
+            batches = [
+                symbols[i:i + BATCH_SIZE]
+                for i in range(0, len(symbols), BATCH_SIZE)
+            ]
+            
+            # Process batches in groups of MAX_CONCURRENT_BATCHES
+            for i in range(0, len(batches), MAX_CONCURRENT_BATCHES):
+                batch_group = batches[i:i + MAX_CONCURRENT_BATCHES]
+                await asyncio.gather(*(
+                    update_data_batch(batch) for batch in batch_group
+                ))
+            
             progress.advance(overall)
             
             console.print("[green]Routine update completed!")

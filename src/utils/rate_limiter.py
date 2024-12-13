@@ -82,7 +82,7 @@ class RedisRateLimiter:
                 
             self._rate_limit_hits += 1
             if self._rate_limit_hits == 1:  # Only log on first hit
-                logger.warning(f"Rate limit exceeded: waiting {self.window_size:.3f} seconds between requests")
+                logger.debug(f"Rate limit exceeded: waiting {self.window_size:.3f} seconds between requests")
             return False
             
         except redis.RedisError as e:
@@ -94,12 +94,12 @@ class RedisRateLimiter:
         """Wait until a rate limit token is available."""
         if not await self.acquire():
             if self._rate_limit_hits == 1:  # Only log on first hit
-                logger.warning("Rate limit hit, waiting for token...")
+                logger.debug("Rate limit hit, waiting for token...")
             t0 = time.time()
             while not await self.acquire():
                 await asyncio.sleep(self.window_size)
             t1 = time.time()
-            logger.info(f"Rate limit cleared after {self._rate_limit_hits} hits, took {t1 - t0:.2f} seconds")
+            logger.debug(f"Rate limit cleared after {self._rate_limit_hits} hits, took {t1 - t0:.2f} seconds")
             self._rate_limit_hits = 0
 
     @property
