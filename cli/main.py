@@ -1,9 +1,7 @@
 import asyncio
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 import click
 import pandas as pd
@@ -24,6 +22,7 @@ from rich.theme import Theme
 from src.api.fmp_client import FMPClient
 from src.config.settings import Settings, load_config
 from src.storage.mongo import MongoStorage
+from src.utils.calendar import get_latest_market_day
 
 # Configure rich console with custom theme
 custom_theme = Theme({
@@ -75,9 +74,10 @@ def interactive(config: Optional[str]):
             if choice == "1":
                 symbol = click.prompt("Enter symbol (leave empty for all symbols)", default="")
                 start_date = click.prompt("Start date (YYYY-MM-DD)", default="2004-01-01")
+                default_end_date = get_latest_market_day().strftime("%Y-%m-%d")
                 end_date = click.prompt(
                     "End date (YYYY-MM-DD)",
-                    default=datetime.now(ZoneInfo("America/New_York")).replace(tzinfo=None).strftime("%Y-%m-%d")
+                    default=default_end_date
                 )
                 interval = click.prompt(
                     "Interval",
@@ -310,7 +310,7 @@ def test(config: Optional[str], symbol: str):
                     daily_df = await client.get_historical_data(
                         symbol,
                         start_date="2024-01-01",
-                        end_date=pd.Timestamp.now(),
+                        end_date=get_latest_market_day(),
                         interval="1d"
                     )
                     if not daily_df.empty:
@@ -404,8 +404,8 @@ async def run_routine_update(settings: Settings, storage: MongoStorage, days: in
             
             # 4. Update historical data
             progress.update(overall, description="[cyan]Updating historical data...")
-            end_date = pd.Timestamp.now(tz=ZoneInfo("America/New_York")).tz_localize(None)
-            start_date = end_date - pd.Timedelta(days=days)
+            end_date = get_latest_market_day()
+            start_date = pd.Timestamp(end_date) - pd.Timedelta(days=days)
             
             for symbol in symbols:
                 try:

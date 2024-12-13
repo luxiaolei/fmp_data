@@ -14,6 +14,7 @@ from ..config.settings import Settings
 from ..models.data_types import AssetType, ExchangeInfo, IndexConstituent
 from ..storage.mongo import MongoStorage
 from ..storage.protocols import StorageProtocol
+from ..utils.calendar import get_latest_market_day
 from ..utils.date_utils import split_5min_date_range, split_daily_date_range
 from ..utils.rate_limiter import RedisRateLimiter
 from ..utils.tasks import background_task
@@ -67,7 +68,7 @@ class FMPClient:
         self,
         symbol: str,
         start_date: Union[str, datetime, pd.Timestamp],
-        end_date: Union[str, datetime, pd.Timestamp],
+        end_date: Optional[Union[str, datetime, pd.Timestamp]] = None,
         interval: str = "1d",
         progress: Optional[Progress] = None
     ) -> pd.DataFrame:
@@ -79,8 +80,8 @@ class FMPClient:
             Trading symbol
         start_date : Union[str, datetime, pd.Timestamp]
             Start date for historical data
-        end_date : Union[str, datetime, pd.Timestamp]
-            End date for historical data
+        end_date : Optional[Union[str, datetime, pd.Timestamp]], optional
+            End date for historical data, by default None (latest market day)
         interval : str, optional
             Data interval ('1d' or '5min'), by default "1d"
         progress : Optional[Progress], optional
@@ -97,6 +98,10 @@ class FMPClient:
         """
         if not self.storage:
             raise ValueError("Storage not initialized")
+        
+        # Get latest market day if end_date not provided
+        if end_date is None:
+            end_date = get_latest_market_day()
         
         start_dt = pd.Timestamp(start_date)
         end_dt = pd.Timestamp(end_date)

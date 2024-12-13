@@ -1,11 +1,13 @@
 """Exchange calendar utilities."""
 
-from datetime import datetime
-from typing import List
+from datetime import datetime, time
+from typing import List, Optional
+from zoneinfo import ZoneInfo
 
 import exchange_calendars as xcals
 import pandas as pd
 from loguru import logger
+from pandas.tseries.offsets import BDay
 
 
 class ExchangeCalendar:
@@ -121,3 +123,76 @@ class ExchangeCalendar:
             h.tz_localize(calendar.tz).to_pydatetime() 
             for h in holidays
         ]
+
+
+def get_ny_time() -> datetime:
+    """Get current time in New York timezone.
+    
+    Returns
+    -------
+    datetime
+        Current time in New York
+    """
+    return datetime.now(ZoneInfo("America/New_York"))
+
+
+def is_market_closed(dt: Optional[datetime] = None) -> bool:
+    """Check if market is closed at given time.
+    
+    Parameters
+    ----------
+    dt : Optional[datetime], optional
+        Datetime to check, by default None (current NY time)
+        
+    Returns
+    -------
+    bool
+        True if market is closed
+    """
+    dt = dt or get_ny_time()
+    
+    # Convert to NY time if timezone aware
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(ZoneInfo("America/New_York"))
+    
+    # Market hours: 9:30 AM - 4:00 PM ET
+    market_open = time(9, 30)
+    market_close = time(16, 0)
+    
+    # Check if weekend
+    if dt.weekday() > 4:  # 5 = Saturday, 6 = Sunday
+        return True
+        
+    # Check if before open or after close
+    current_time = dt.time()
+    if current_time < market_open or current_time >= market_close:
+        return True
+        
+    return False
+
+
+def get_latest_market_day(dt: Optional[datetime] = None) -> datetime:
+    """Get latest completed market day.
+    
+    Parameters
+    ----------
+    dt : Optional[datetime], optional
+        Reference datetime, by default None (current NY time)
+        
+    Returns
+    -------
+    datetime
+        Latest completed market day
+    """
+    dt = dt or get_ny_time()
+    
+    # Convert to NY time if timezone aware
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(ZoneInfo("America/New_York"))
+    
+    # If market is closed for current day, move back one business day
+    if is_market_closed(dt):
+        dt = (pd.Timestamp(dt) - BDay(1)).to_pydatetime()
+    
+    # Return date part only
+    return dt.replace(hour=0, minute=0, second=0, microsecond=0)
