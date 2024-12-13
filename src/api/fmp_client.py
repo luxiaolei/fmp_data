@@ -233,7 +233,7 @@ class FMPClient:
             chunk_task = progress.add_task(
                 f"[cyan]Downloading chunks for {symbol}",
                 total=len(chunks),
-                visible=False
+                visible=True
             )
 
         for chunk_start, chunk_end in chunks:
