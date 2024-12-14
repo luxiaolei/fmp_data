@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import aiohttp
 import pandas as pd
@@ -612,3 +612,31 @@ class FMPClient:
             current = chunk_end
             
         return date_chunks
+
+    async def _process_historical_data(self, data: List[Dict[str, Any]]) -> pd.DataFrame:
+        """Process historical data response."""
+        if not data:
+            return pd.DataFrame()
+        
+        try:
+            df = pd.DataFrame(data)
+            
+            # Convert date column
+            df["date"] = pd.to_datetime(df["date"])
+            
+            # Ensure numeric columns are properly converted
+            numeric_columns = [
+                "open", "high", "low", "close", "volume",
+                "unadjusted_volume", "change", "change_percent",
+                "vwap", "change_over_time"
+            ]
+            
+            for col in numeric_columns:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            return df.sort_values("date", ascending=True)
+            
+        except Exception as e:
+            logger.error(f"Error processing historical data: {e}")
+            return pd.DataFrame()
