@@ -12,8 +12,21 @@ from .schemas import SymbolMetadata
 class StorageProtocol(Protocol):
     """Protocol for storage implementations."""
     
-    storage: Any
-    
+    @property
+    def storage(self) -> Any:
+        """Get storage instance."""
+        ...
+
+    async def get_historical_data(
+        self,
+        symbol: str,
+        start_date: Union[str, datetime, pd.Timestamp],
+        end_date: Union[str, datetime, pd.Timestamp],
+        interval: str = "1d"
+    ) -> pd.DataFrame:
+        """Get historical price data."""
+        ...
+
     async def store_historical_data(
         self,
         df: pd.DataFrame,
@@ -22,15 +35,19 @@ class StorageProtocol(Protocol):
     ) -> None:
         """Store historical price data."""
         ...
-        
-    async def get_historical_data(
+
+    async def update_symbol_metadata(
         self,
         symbol: str,
-        start_date: Union[str, datetime, pd.Timestamp],
-        end_date: Union[str, datetime, pd.Timestamp],
-        interval: str = "1d"
-    ) -> pd.DataFrame:
-        """Get historical price data from storage."""
+        df: pd.DataFrame,
+        interval: str = "1d",
+        exchange_info: Optional[ExchangeInfo] = None
+    ) -> None:
+        """Update symbol metadata."""
+        ...
+
+    async def get_symbol_metadata(self, symbol: str) -> Optional[SymbolMetadata]:
+        """Get metadata for a symbol."""
         ...
         
     async def store_company_profile(self, profile: Dict) -> None:
@@ -47,18 +64,4 @@ class StorageProtocol(Protocol):
         
     async def store_exchange_symbols(self, exchange: str, symbols: List[ExchangeInfo]) -> None:
         """Store exchange symbols in storage."""
-        ...
-        
-    async def get_symbol_metadata(self, symbol: str) -> Optional[SymbolMetadata]:
-        """Get metadata for a symbol."""
-        ...
-        
-    async def update_symbol_metadata(
-        self,
-        symbol: str,
-        df: pd.DataFrame,
-        interval: str = "1d",
-        exchange_info: Optional[ExchangeInfo] = None
-    ) -> None:
-        """Update symbol metadata."""
         ... 

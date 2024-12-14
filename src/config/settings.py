@@ -1,10 +1,10 @@
 """Configuration settings for FMP Data client."""
 
 import os
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from dotenv import load_dotenv
+from loguru import logger
 
 load_dotenv()
 
@@ -40,12 +40,13 @@ class APIConfig(BaseModel if 'BaseModel' in locals() else ConfigModel):  # type:
 
 
 class StorageConfig(BaseModel):
-    """Storage configuration settings."""
-    
-    mongodb_uri: str = Field(..., description="MongoDB connection URI")
-    mongodb_db: str = Field(..., description="MongoDB database name")
-    redis_url: str = Field(..., description="Redis connection URL")
-    redis_password: str = Field(..., description="Redis password")
+    """Storage configuration."""
+    mongodb_uri: str = "mongodb://localhost:27017"
+    mongodb_db: str = "fmp_data"
+    mongodb_user: str = ""
+    mongodb_pass: str = ""
+    redis_url: str = "redis://localhost:6379"
+    redis_password: str = ""
 
 
 class Settings(BaseModel):
@@ -55,48 +56,30 @@ class Settings(BaseModel):
     storage: StorageConfig
 
 
-def load_config(config_path: Optional[Path] = None) -> Settings:
-    """Load configuration from file and/or environment variables.
+def load_settings() -> Settings:
+    """Load settings from environment."""
+    load_dotenv()
     
-    Parameters
-    ----------
-    config_path : Optional[Path]
-        Path to YAML config file. If not provided, will look for config.yaml
-        in the current directory.
-        
-    Returns
-    -------
-    Settings
-        Configuration settings
-        
-    Raises
-    ------
-    ValueError
-        If required settings are missing
-    """
-    # Default config
-    config: Dict[str, Any] = {
-        "api": {
-            "key": os.getenv("FMP_API_KEY", ""),
-            "base_url": "https://financialmodelingprep.com/api/v3",
-            "rate_limit": 750
-        },
-        "storage": {
-            "mongodb_uri": os.getenv("MONGO_URI", ""),
-            "mongodb_db": os.getenv("MONGO_DB_NAME", ""),
-            "redis_url": os.getenv("REDIS_URL", ""),
-            "redis_password": os.getenv("REDIS_PASSWORD", "")
-        }
-    }
+    mongodb_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+    mongodb_user = os.getenv("MONGODB_USER", "")
+    mongodb_pass = os.getenv("MONGODB_PASS", "")
+    mongodb_db = os.getenv("MONGODB_DB", "fmp_data")
     
-    # Load from file if provided
-    if config_path is None:
-        config_path = Path("config.yaml")
-        
-    if config_path.exists():
-        with open(config_path) as f:
-            file_config = yaml.safe_load(f)
-            if file_config:
-                config.update(file_config)
-                
-    return Settings(**config) 
+    # Log connection details (without password)
+    logger.debug(f"MongoDB URI: {mongodb_uri}")
+    logger.debug(f"MongoDB User: {mongodb_user}")
+    logger.debug(f"MongoDB DB: {mongodb_db}")
+    
+    return Settings(
+        api=APIConfig(
+            key=os.getenv("FMP_API_KEY", "")
+        ),
+        storage=StorageConfig(
+            mongodb_uri=mongodb_uri,
+            mongodb_db=mongodb_db,
+            mongodb_user=mongodb_user,
+            mongodb_pass=mongodb_pass,
+            redis_url=os.getenv("REDIS_URL", "redis://localhost:6379"),
+            redis_password=os.getenv("REDIS_PASSWORD", "")
+        )
+    ) 

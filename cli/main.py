@@ -1,6 +1,7 @@
+"""Command line interface for FMP data client."""
+
 import asyncio
 import sys
-from pathlib import Path
 from typing import Optional
 
 import click
@@ -18,9 +19,10 @@ from rich.progress import (
 )
 from rich.table import Table
 from rich.theme import Theme
+from tqdm import tqdm
 
 from src.api.fmp_client import FMPClient
-from src.config.settings import Settings, load_config
+from src.config.settings import Settings, load_settings
 from src.storage.mongo import MongoStorage
 from src.utils.calendar import get_latest_market_day
 
@@ -33,6 +35,7 @@ custom_theme = Theme({
 })
 console = Console(theme=custom_theme)
 
+# Configure logger
 logger.remove()  # Remove default handler
 logger.add(sys.stderr, level="INFO")  # Add new handler with INFO level
 
@@ -44,14 +47,14 @@ def cli():
         "[dim]A tool for downloading and managing financial market data[/dim]"
     ))
 
-
 @cli.command()
 @click.option("--config", type=click.Path(exists=True), help="Path to config file")
 def interactive(config: Optional[str]):
     """Interactive mode for data management."""
     async def _run():
-        settings = load_config(Path(config) if config else None)
+        settings = load_settings()  # Remove Path argument
         storage = MongoStorage(settings)
+        await storage.connect()
         
         while True:
             console.print("\n[bold cyan]Available Actions:[/bold cyan]")
@@ -86,51 +89,20 @@ def interactive(config: Optional[str]):
                 )
                 
                 async with FMPClient(settings) as client:
-                    with Progress(
-                        SpinnerColumn(),
-                        TextColumn("[progress.description]{task.description}"),
-                        BarColumn(),
-                        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                        TimeRemainingColumn(),
-                    ) as progress:
-                        progress: Progress
-                        if symbol:
-                            chunk_task = progress.add_task(f"[cyan]Downloading {symbol}", total=None)
-                            df = await client.get_historical_data(
-                                symbol,
-                                start_date,
-                                end_date,
-                                interval,
-                                progress=progress
-                            )
-                            if not df.empty:
-                                await storage.store_historical_data(df, symbol, interval)
-                                progress.update(chunk_task, description=f"[green]Successfully downloaded {len(df)} records for {symbol}")
-                            else:
-                                progress.update(chunk_task, description=f"[yellow]No data found for {symbol}")
-                        else:
-                            # Download for all symbols with batch processing
-                            BATCH_SIZE = 175  # 700/4 for optimal rate limit usage
-                            MAX_CONCURRENT_BATCHES = 4  # Number of batches to process concurrently
-                            
-                            symbols = await client.get_all_exchange_symbols()
-                            
-                            # Create two progress bars - one for overall progress and one for current batch
-                            symbols_task = progress.add_task(
-                                f"[cyan]Overall progress ({interval})",
-                                total=len(symbols)
-                            )
-                            batch_task = progress.add_task(
-                                "[cyan]Current batch",
-                                total=BATCH_SIZE,
-                                visible=True
-                            )
-                            
-                            async def download_symbol_batch(batch):
-                                """Download historical data for a batch of symbols."""
-                                # Reset batch progress for new batch
-                                progress.update(batch_task, completed=0, visible=True)
-                                
+                    if symbol:
+                        df = await client.get_historical_data(symbol, start_date, end_date, interval)
+                        if not df.empty:
+                            await storage.store_historical_data(df, symbol, interval)
+                    else:
+                        BATCH_SIZE = 175
+                        MAX_CONCURRENT_BATCHES = 4
+                        
+                        symbols = await client.get_all_exchange_symbols()
+                        batches = [symbols[i:i + BATCH_SIZE] for i in range(0, len(symbols), BATCH_SIZE)]
+                        
+                        async def download_symbol_batch(batch, start_date, end_date, interval, storage, client):
+                            """Download historical data for a batch of symbols."""
+                            try:
                                 tasks = []
                                 for sym in batch:
                                     tasks.append(
@@ -138,55 +110,49 @@ def interactive(config: Optional[str]):
                                             sym.symbol,
                                             start_date,
                                             end_date,
-                                            interval,
-                                            progress=progress
+                                            interval
                                         )
                                     )
-                                results = await asyncio.gather(*tasks, return_exceptions=True)
+                                
+                                # Use asyncio.gather with return_exceptions and wrap with tqdm
+                                with tqdm(
+                                    total=len(tasks),
+                                    desc=f"Processing batch of {len(batch)} symbols",
+                                    leave=False
+                                ) as pbar:
+                                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                                    pbar.update(len(tasks))
                                 
                                 for sym, result in zip(batch, results):
                                     try:
                                         if isinstance(result, Exception):
                                             logger.error(f"Error downloading {sym.symbol}: {result}")
-                                            progress.update(symbols_task, advance=1)
-                                            progress.update(batch_task, advance=1)
                                             continue
-                                        
+                                            
                                         if isinstance(result, pd.DataFrame) and not result.empty:
                                             await storage.store_historical_data(result, sym.symbol, interval)
-                                            progress.update(
-                                                symbols_task,
-                                                advance=1,
-                                                description=f"[green]Downloaded {sym.symbol}"
-                                            )
                                         else:
-                                            progress.update(
-                                                symbols_task,
-                                                advance=1,
-                                                description=f"[yellow]No data for {sym.symbol}"
-                                            )
-                                        progress.update(batch_task, advance=1)
+                                            logger.warning(f"No data for {sym.symbol}")
                                     except Exception as e:
                                         logger.error(f"Error processing {sym.symbol}: {e}")
-                                        progress.update(symbols_task, advance=1)
-                                        progress.update(batch_task, advance=1)
-                                
-                                # Hide batch progress after completion
-                                progress.update(batch_task, visible=False)
-                            
-                            # Split symbols into batches
-                            batches = [
-                                symbols[i:i + BATCH_SIZE]
-                                for i in range(0, len(symbols), BATCH_SIZE)
-                            ]
-                            
-                            # Process batches in groups of MAX_CONCURRENT_BATCHES
+                            except Exception as e:
+                                logger.error(f"Batch processing error: {e}")
+
+                        # Use single tqdm for overall progress
+                        with tqdm(
+                            total=len(symbols),
+                            desc="Downloading historical data",
+                            unit="symbols"
+                        ) as pbar:
                             for i in range(0, len(batches), MAX_CONCURRENT_BATCHES):
                                 batch_group = batches[i:i + MAX_CONCURRENT_BATCHES]
-                                progress.update(batch_task, total=len(batch_group[0]))  # Update for potentially smaller last batch
                                 await asyncio.gather(*(
-                                    download_symbol_batch(batch) for batch in batch_group
+                                    download_symbol_batch(
+                                        batch, start_date, end_date, interval, storage, client
+                                    ) for batch in batch_group
                                 ))
+                                # Update by the total number of symbols in this batch group
+                                pbar.update(sum(len(batch) for batch in batch_group))
             
             elif choice == "2":
                 index = click.prompt(
@@ -310,8 +276,7 @@ def update_indexes(config: Optional[str]):
     """Update index constituents."""
     async def _run():
         try:
-            settings = load_config(Path(config) if config else None)
-            storage = MongoStorage(settings)
+            settings = load_settings()
             
             async with FMPClient(settings) as client:
                 for index in ["sp500", "nasdaq", "dowjones"]:
@@ -341,7 +306,7 @@ def test(config: Optional[str], symbol: str):
     """Run system tests."""
     async def _run():
         try:
-            settings = load_config(Path(config) if config else None)
+            settings = load_settings()
             
             with Progress(
                 SpinnerColumn(),
@@ -560,8 +525,9 @@ async def run_routine_update(settings: Settings, storage: MongoStorage, days: in
 def routine_update(config: Optional[str], days: int):
     """Run routine updates for all data."""
     async def _run():
-        settings = load_config(Path(config) if config else None)
+        settings = load_settings()  # Remove Path argument
         storage = MongoStorage(settings)
+        await storage.connect()  # Initialize MongoDB connection
         await run_routine_update(settings, storage, days)
         
     try:

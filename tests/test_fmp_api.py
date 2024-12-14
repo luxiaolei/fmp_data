@@ -8,7 +8,6 @@ from typing import AsyncGenerator, Generator, Sequence
 import pytest
 import pytest_asyncio
 from dotenv import load_dotenv
-from motor.motor_asyncio import AsyncIOMotorClient
 
 from src.api.fmp_client import FMPClient
 from src.config.settings import APIConfig, Settings, StorageConfig
@@ -39,15 +38,13 @@ async def storage() -> AsyncGenerator[MongoStorage, None]:
             redis_password=""
         )
     )
-    storage = MongoStorage(settings)
-    # Initialize MongoDB client
-    client = AsyncIOMotorClient(settings.storage.mongodb_uri)
-    storage.db = client[settings.storage.mongodb_db]
-    yield storage
+    
+    async with MongoStorage(settings) as storage:
+        yield storage
 
 
 @pytest_asyncio.fixture
-async def client(api_key: str) -> AsyncGenerator[FMPClient, None]:
+async def client(api_key: str, storage: MongoStorage) -> AsyncGenerator[FMPClient, None]:
     """Create FMP client."""
     settings = Settings(
         api=APIConfig(key=api_key),
@@ -58,9 +55,9 @@ async def client(api_key: str) -> AsyncGenerator[FMPClient, None]:
             redis_password=""
         )
     )
-    fmp = FMPClient(settings)
-    async with fmp:  # Use async context manager
-        yield fmp
+    async with FMPClient(settings) as client:
+        client.storage = storage  # Use the already initialized storage
+        yield client
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,12 @@ A robust Python client for Financial Modeling Prep (FMP) API with data persisten
 - Timezone-aware data handling
 - Configurable logging with loguru
 
+## TODOs
+
+- [ ] Add index history data
+- [ ] Add constituent history data
+- [ ] Hanlde routine updates for prices data, index constituents, and company profiles
+  
 ## Installation
 
 ```bash

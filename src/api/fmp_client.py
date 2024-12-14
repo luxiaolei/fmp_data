@@ -294,7 +294,9 @@ class FMPClient:
     async def __aenter__(self) -> "FMPClient":
         """Enter async context."""
         self.session = aiohttp.ClientSession()
-        self.storage = MongoStorage(self.settings)
+        if not self.storage:
+            self.storage = MongoStorage(self.settings)
+            await self.storage.connect()  # Ensure connection is established
         return self
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):

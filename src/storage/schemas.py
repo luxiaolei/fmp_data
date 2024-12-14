@@ -2,9 +2,10 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from beanie import Document, Indexed
+from pydantic import Field
 
 
 class DataSource(str, Enum):
@@ -20,40 +21,125 @@ class DataStatus(str, Enum):
     INVALID = "invalid"
 
 
-class DataMetadata(BaseModel):
-    """Base metadata for all collections."""
-    
-    last_updated: datetime = Field(default_factory=datetime.utcnow)
-    source: DataSource = Field(default=DataSource.FMP)
-    status: DataStatus = Field(default=DataStatus.COMPLETE)
-    version: str = Field(default="1.0")
+class HistoricalPrice(Document):
+    """Historical price document model."""
+    symbol: str = Indexed(str)
+    date: datetime = Indexed(datetime)
+    open: float
+    high: float
+    low: float
+    close: float
+    adj_close: float | None = None
+    volume: int
+    unadjusted_volume: int = 0
+    change: float
+    change_percent: float | None = None
+    vwap: float | None = None
+    label: str
+    change_over_time: float | None = None
+
+    class Settings:
+        name = "historical_prices"
+        indexes = [
+            [("symbol", 1), ("date", 1)],
+            [("date", 1)]
+        ]
 
 
-class SymbolMetadata(DataMetadata):
-    """Metadata for symbol data."""
-    
-    symbol: str
+class SymbolMetadata(Document):
+    """Symbol metadata document model."""
+    symbol: str = Indexed(str, unique=True)
     first_date: datetime
-    first_price: Optional[float] = None
+    first_price: float
     last_date: datetime
     data_points: int
-    intervals: List[str]  # ["1d", "5min"]
-    has_gaps: bool = False
+    intervals: List[str]
+    status: str
+    exchanges: List[str]
+    asset_type: str
     gap_dates: Optional[List[datetime]] = None
-    exchanges: List[str]  # ["NYSE", "NASDAQ"]
-    asset_type: str  # "stock", "etf", "index", etc.
+    has_gaps: bool = False
+
+    class Settings:
+        name = "symbol_metadata"
+        indexes = [
+            [("symbol", 1)],
+            [("exchanges", 1)],
+            [("asset_type", 1)]
+        ]
 
 
-class IndexMetadata(DataMetadata):
-    """Metadata for index data."""
-    
-    index_name: str  # "sp500", "nasdaq", "dowjones"
-    constituent_count: int
-    last_rebalance: datetime
-    sectors: Dict[str, int]  # Sector distribution
+class IndexConstituent(Document):
+    """Index constituent document model."""
+    index: str = Indexed(str)
+    symbol: str = Indexed(str)
+    name: str
+    sector: str
+    sub_sector: str
+    head_quarter: Optional[str] = None
+    date_first_added: Optional[str] = None
+    cik: Optional[str] = None
+    founded: Optional[str] = None
+    last_updated: datetime = Field(default_factory=lambda: datetime.utcnow())
+
+    class Settings:
+        name = "index_constituents"
+        indexes = [
+            [("index", 1), ("symbol", 1)],
+            [("last_updated", 1)]
+        ]
 
 
-# MongoDB collection schemas
+class ExchangeSymbol(Document):
+    """Exchange symbol document model."""
+    exchange: str = Indexed(str)
+    symbol: str = Indexed(str)
+    name: Optional[str] = None
+    price: Optional[float] = None
+    changes_percentage: Optional[float] = None
+    change: Optional[float] = None
+    day_low: Optional[float] = None
+    day_high: Optional[float] = None
+    year_high: Optional[float] = None
+    year_low: Optional[float] = None
+    market_cap: Optional[float] = None
+    price_avg50: Optional[float] = None
+    price_avg200: Optional[float] = None
+    volume: Optional[float] = None
+    avg_volume: Optional[float] = None
+    open: Optional[float] = None
+    previous_close: Optional[float] = None
+    eps: Optional[float] = None
+    pe: Optional[float] = None
+    earnings_announcement: Optional[str] = None
+    shares_outstanding: Optional[float] = None
+    timestamp: Optional[int] = None
+    asset_type: Optional[str] = None
+    last_updated: datetime = Field(default_factory=lambda: datetime.utcnow())
+
+    class Settings:
+        name = "exchange_symbols"
+        indexes = [
+            [("exchange", 1), ("symbol", 1)],
+            [("last_updated", 1)]
+        ]
+
+
+class CompanyProfile(Document):
+    """Company profile document model."""
+    symbol: str = Indexed(str, unique=True)
+    last_updated: datetime = Field(default_factory=lambda: datetime.utcnow())
+    data: Dict[str, Any] = Field(default_factory=dict)
+
+    class Settings:
+        name = "company_profiles"
+        indexes = [
+            [("symbol", 1)],
+            [("last_updated", 1)]
+        ]
+
+
+# Keep the existing COLLECTIONS configuration for MongoDB validation
 COLLECTIONS = {
     # Price data collections
     "historical_prices": {

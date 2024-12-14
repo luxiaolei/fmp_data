@@ -1,9 +1,8 @@
-"""Test configuration and shared fixtures."""
+"""Test configuration."""
 
 import sys
 from pathlib import Path
 
-# Add src directory to Python path for imports
-src_path = str(Path(__file__).parent.parent / "src")
-if src_path not in sys.path:
-    sys.path.append(src_path) 
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root)) 
