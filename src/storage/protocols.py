@@ -1,7 +1,7 @@
-"""Storage protocols."""
+"""Storage protocols for FMP data."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Protocol, Union
+from typing import Dict, List, Optional, Protocol, Union, runtime_checkable
 
 import pandas as pd
 
@@ -9,12 +9,21 @@ from ..models.data_types import ExchangeInfo
 from .schemas import SymbolMetadata
 
 
+@runtime_checkable
 class StorageProtocol(Protocol):
-    """Protocol for storage implementations."""
+    """Storage protocol for FMP data."""
     
-    @property
-    def storage(self) -> Any:
-        """Get storage instance."""
+    async def connect(self) -> None:
+        """Connect to storage."""
+        ...
+
+    async def store_historical_data(
+        self,
+        df: pd.DataFrame,
+        symbol: str,
+        interval: str = "1d"
+    ) -> None:
+        """Store historical price data."""
         ...
 
     async def get_historical_data(
@@ -25,15 +34,6 @@ class StorageProtocol(Protocol):
         interval: str = "1d"
     ) -> pd.DataFrame:
         """Get historical price data."""
-        ...
-
-    async def store_historical_data(
-        self,
-        df: pd.DataFrame,
-        symbol: str,
-        interval: str = "1d"
-    ) -> None:
-        """Store historical price data."""
         ...
 
     async def update_symbol_metadata(

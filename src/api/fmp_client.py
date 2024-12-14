@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Protocol, Set, Tuple, Union
 
 import aiohttp
 import pandas as pd
@@ -12,7 +12,6 @@ from rich.progress import Progress
 
 from ..config.settings import Settings
 from ..models.data_types import AssetType, ExchangeInfo, IndexConstituent
-from ..storage.mongo import MongoStorage
 from ..storage.protocols import StorageProtocol
 from ..utils.calendar import get_latest_market_day
 from ..utils.date_utils import split_5min_date_range, split_daily_date_range
@@ -20,27 +19,33 @@ from ..utils.rate_limiter import RedisRateLimiter
 from ..utils.tasks import background_task
 
 
+class StorageFactory(Protocol):
+    """Storage factory protocol."""
+    def __call__(self, settings: Settings) -> StorageProtocol:
+        ...
+
 class FMPClient:
     """Financial Modeling Prep API client."""
     
     def __init__(
         self,
         settings: Settings,
-        redis_url: str = "redis://localhost:6379",
-        redis_password: Optional[str] = None
+        storage_factory: Optional[StorageFactory] = None
     ):
         """Initialize FMP client."""
         self.settings = settings
         self.session: Optional[aiohttp.ClientSession] = None
-        self.storage: StorageProtocol = MongoStorage(settings)
+        self.storage: Optional[StorageProtocol] = None
+        if storage_factory:
+            self.storage = storage_factory(settings)
         self._logger = logger
         self._exchange_cache: Dict[str, List[ExchangeInfo]] = {}
         self._background_tasks: Set[asyncio.Task] = set()
         
         # Initialize rate limiter
         self.rate_limiter = RedisRateLimiter(
-            redis_url=redis_url,
-            redis_password=redis_password
+            redis_url="redis://localhost:6379",
+            redis_password=None
         )
 
     @background_task
@@ -52,6 +57,9 @@ class FMPClient:
     ) -> None:
         """Store data in MongoDB asynchronously."""
         try:
+            if self.storage is None:
+                raise ValueError("Storage not initialized")
+            
             logger.debug(f"Starting background storage task for {symbol}")
             await self.storage.store_historical_data(df, symbol, interval)
             logger.debug(f"Completed background storage task for {symbol}")
@@ -295,8 +303,10 @@ class FMPClient:
         """Enter async context."""
         self.session = aiohttp.ClientSession()
         if not self.storage:
+            # Create storage only if not provided
+            from ..storage.mongo import MongoStorage
             self.storage = MongoStorage(self.settings)
-            await self.storage.connect()  # Ensure connection is established
+            await self.storage.connect()
         return self
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -567,6 +577,9 @@ class FMPClient:
     async def _store_profile_async(self, profile: Dict) -> None:
         """Store company profile in MongoDB asynchronously."""
         try:
+            if self.storage is None:
+                raise ValueError("Storage not initialized")
+            
             await self.storage.store_company_profile(profile)
         except Exception as e:
             logger.error(f"Error storing profile: {e}", exc_info=True)

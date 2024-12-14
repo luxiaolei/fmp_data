@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
 from beanie import init_beanie
+from beanie.odm.enums import SortDirection
 from loguru import logger
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -49,9 +50,11 @@ class MongoStorage(StorageProtocol):
             try:
                 self.client = AsyncIOMotorClient(
                     uri,
-                    serverSelectionTimeoutMS=5000,
-                    connectTimeoutMS=5000,
-                    socketTimeoutMS=5000
+                    serverSelectionTimeoutMS=30000,
+                    connectTimeoutMS=30000,
+                    socketTimeoutMS=30000,
+                    maxPoolSize=50,
+                    waitQueueTimeoutMS=30000
                 )
                 
                 if not self.client:
@@ -284,50 +287,51 @@ class MongoStorage(StorageProtocol):
     async def get_data_statistics(self) -> Dict[str, Any]:
         """Get statistics about stored data."""
         try:
-            # Get basic statistics
-            total_symbols = await SymbolMetadata.count()
-            total_daily_points = await HistoricalPrice.count()
-            
-            # Get date range
-            date_stats = await SymbolMetadata.find({}).aggregate([{
-                "$group": {
-                    "_id": None,
-                    "earliest_date": {"$min": "$first_date"},
-                    "latest_date": {"$max": "$last_date"}
-                }
-            }]).to_list()
-            
-            # Get symbols by exchange
-            exchange_stats = await SymbolMetadata.find({}).aggregate([{
-                "$unwind": "$exchanges"
-            }, {
-                "$group": {
-                    "_id": "$exchanges",
-                    "count": {"$sum": 1}
-                }
-            }]).to_list()
-            
-            # Get symbols by asset type
-            asset_stats = await SymbolMetadata.find({}).aggregate([{
-                "$group": {
-                    "_id": "$asset_type",
-                    "count": {"$sum": 1}
-                }
-            }]).to_list()
-            
+            # Get basic counts with timeout
+            total_symbols = await SymbolMetadata.find({}, max_time_ms=5000).count()
+            total_daily_points = await HistoricalPrice.find({}, max_time_ms=5000).count()
+
+            # Get most recent metadata for date range
+            latest_symbol = await SymbolMetadata.find(
+                {},  # First argument is the filter
+                {"first_date": 1, "last_date": 1, "_id": 0},  # Second argument is projection
+                max_time_ms=5000
+            ).sort(("last_date", SortDirection.DESCENDING)).limit(1).to_list(1)
+
+            # Get top 10 exchanges by symbol count
+            exchange_pipeline = [
+                {"$unwind": "$exchanges"},
+                {"$group": {"_id": "$exchanges", "count": {"$sum": 1}}},
+                {"$sort": {"count": -1}},
+                {"$limit": 10}
+            ]
+            exchange_stats = await SymbolMetadata.aggregate(exchange_pipeline).to_list(10)
+
+            # Get asset types summary
+            asset_pipeline = [
+                {"$group": {"_id": "$asset_type", "count": {"$sum": 1}}},
+                {"$sort": {"count": -1}},
+                {"$limit": 5}
+            ]
+            asset_stats = await SymbolMetadata.aggregate(asset_pipeline).to_list(5)
+
+            # Extract date range from latest symbol
+            date_range = {
+                "start": latest_symbol[0].get("first_date") if latest_symbol else None,
+                "end": latest_symbol[0].get("last_date") if latest_symbol else None
+            }
+
             return {
                 "total_symbols": total_symbols,
                 "total_daily_points": total_daily_points,
-                "total_5min_points": 0,  # Implement if needed
-                "date_range": {
-                    "start": date_stats[0].get("earliest_date") if date_stats else None,
-                    "end": date_stats[0].get("latest_date") if date_stats else None
+                "date_range": date_range,
+                "top_exchanges": {
+                    ex["_id"]: ex["count"] 
+                    for ex in exchange_stats
                 },
-                "symbols_by_exchange": {
-                    str(stat["_id"]): stat["count"] for stat in exchange_stats
-                },
-                "symbols_by_type": {
-                    str(stat["_id"]): stat["count"] for stat in asset_stats
+                "asset_types": {
+                    t["_id"]: t["count"] 
+                    for t in asset_stats
                 }
             }
         except Exception as e:
@@ -335,10 +339,9 @@ class MongoStorage(StorageProtocol):
             return {
                 "total_symbols": 0,
                 "total_daily_points": 0,
-                "total_5min_points": 0,
                 "date_range": {"start": None, "end": None},
-                "symbols_by_exchange": {},
-                "symbols_by_type": {}
+                "top_exchanges": {},
+                "asset_types": {}
             }
 
     async def delete_database(self) -> None:
